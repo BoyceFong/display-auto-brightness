@@ -2,7 +2,7 @@
 
 ## 这是什么
 
-让外接显示器按时间自动调节**真实背光亮度**的工具。当前管理两台：**MateView** 和 **U27U2D**（同一套亮度曲线）。
+让外接显示器按时间自动调节**真实背光亮度**的工具。当前管理两台：**MateView** 和 **U27U2D**（各自独立亮度曲线）。
 
 MateView 本身没有环境光传感器，也不提供官方自动亮度功能；华为官方文档甚至称亮度"无法在主机端调节"。但实测发现：通过 **USB-C 直连**时，显示器的 **DDC/CI** 通道是可用的，macOS 上的 `m1ddc` 工具可以直接读写显示器的真实亮度（效果等同于用显示器摇杆在 OSD 里调亮度，而非软件压暗画面）。U27U2D 同样实测支持 DDC 读写。
 
@@ -24,13 +24,14 @@ MateView 本身没有环境光传感器，也不提供官方自动亮度功能�
 
 ```
 mateview-auto-brightness/
-├── m1ddc                          # DDC/CI 命令行工具（编译产物）
+├── m1ddc                          # DDC/CI 命令行工具（编译产物，需自行 build）
 ├── m1ddc-1.1.0/                   # m1ddc 源码（重新编译用）
-├── mateview-brightness.sh         # 核心脚本：计算目标亮度并写入显示器
-├── mateview-brightness-ctl        # 控制脚本：start/stop/status/install/uninstall
+├── mateview-brightness.sh         # 核心脚本：计算目标亮度、检测手动调节、写入显示器
+├── mateview-brightness-ctl        # 控制脚本：start/stop/restart/status/install/uninstall
 ├── com.boyce.mateview-brightness.plist  # launchd 定时任务配置（每 60 秒）
-├── mateview-brightness.log        # 调整记录日志
-├── launchd.out.log / launchd.err.log    # 定时任务的 stdout/stderr
+├── mateview-brightness.log        # 调整记录日志（运行时生成）
+├── mateview-brightness.state      # 手动调节检测状态（运行时生成）
+├── launchd.out.log / launchd.err.log    # 定时任务的 stdout/stderr（运行时生成）
 └── USAGE.md                       # 本文档
 ```
 
@@ -57,7 +58,7 @@ cd /Users/boyce/Misc/code/dev/mateview-auto-brightness
 
 ./mateview-brightness-ctl start     # 启动自动调光
 ./mateview-brightness-ctl stop      # 停止自动调光（当前会话）
-./mateview-brightness-ctl restart   # 重启
+./mateview-brightness-ctl restart   # 重启（同时清除手动调节暂停）
 ./mateview-brightness-ctl status    # 查看运行状态、当前亮度、最近调整记录
 ```
 
@@ -86,18 +87,7 @@ echo "alias mvb='/Users/boyce/Misc/code/dev/mateview-auto-brightness/mateview-br
 
 ## 自定义亮度曲线
 
-编辑 [mateview-brightness.sh](mateview-brightness.sh) 中的时间判断段：
-
-```bash
-now_min=$((10#$(date +%H) * 60 + 10#$(date +%M)))
-if (( now_min < 450 || now_min >= 1140 )); then     # 450=07:30，1140=19:00
-    target=$night                                   # 夜间亮度
-elif (( now_min <= 720 )); then                     # 720=12:00
-    target=$day                                     # 白天平台亮度
-else
-    target=$(( day - (now_min - 720) * (day - night) / 420 ))  # 白天→夜间线性降
-fi
-```
+亮度曲线由三个时间段定义：07:30 前和 19:00 后为夜间值，07:30–12:00 为白天平台值，12:00–19:00 从白天值线性降到夜间值。每台显示器独立配置。
 
 换算规则：分钟数 = 小时 × 60 + 分钟（如 08:30 = 510）。改完无需重启服务，下一个 60 秒周期自动生效。
 
@@ -123,7 +113,10 @@ DISPLAYS="MateView:45:20 U27U2D:25:0"
 检查系统是否给 MateView 开启了 HDR——HDR 模式下显示器会锁定亮度（OSD 中亮度置灰），关闭 HDR 即可恢复。
 
 **Q: 重启后自动调光没运行？**
-确认执行过一次 `install`。运行 `./mateview-brightness-ctl status` 查看状态，未运行时执行 `start`。
+确认执行过一次 `install`。运行 `./mateview-brightness-ctl status` 查看状态，未运行时执行 `start`。若 `start` 报 I/O 错误，是 launchd 瞬态问题，等几分钟重试或重启 Mac 即可。
+
+**Q: 手动调了亮度后自动调光不生效了？**
+这是预期行为：脚本检测到手动调节后会暂停该显示器的自动调光，直到次日或 `restart`。运行 `./mateview-brightness-ctl status` 可查看暂停状态。
 
 **Q: 换了 Mac 或升级了大的 macOS 版本后 m1ddc 报错？**
 重新编译：`cd m1ddc-1.1.0 && make && cp m1ddc ../`（需要 Xcode Command Line Tools）。
@@ -132,7 +125,7 @@ DISPLAYS="MateView:45:20 U27U2D:25:0"
 先确认该显示器 OSD 里的实际亮度设置；DDC 读取偶发毛刺脚本已做数字校验防御，不会产生错误写入。若读数与 OSD 显示长期不符，可能是该显示器 DDC 实现不完整。
 
 **Q: 会不会伤显示器？**
-DDC/CI 是显示器标准协议，等效于手动调 OSD 亮度；且脚本只在亮度值真正变化时才写入（白天平台期不写，下降期约 17 分钟写一次），写入频率极低。
+DDC/CI 是显示器标准协议，等效于手动调 OSD 亮度；且脚本只在亮度值真正变化时才写入（白天平台期不写，下降期约 17 分钟写一次），写入频率极低。手动调节暂停后更是完全不写入。
 
 ## 彻底停用与卸载
 
