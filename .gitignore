@@ -1,0 +1,4 @@
+*.log
+/m1ddc
+m1ddc-1.1.0/m1ddc
+m1ddc-1.1.0/*.o

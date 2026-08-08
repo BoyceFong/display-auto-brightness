@@ -1,0 +1,120 @@
+#!/bin/bash
+set -u
+
+DIR="$(cd "$(dirname "$0")" && pwd)"
+LABEL="com.boyce.mateview-brightness"
+SRC_PLIST="$DIR/$LABEL.plist"
+DEST_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+M1DDC="$DIR/m1ddc"
+LOG="$DIR/mateview-brightness.log"
+DISPLAYS="MateView:45:20 U27U2D:25:0"
+
+is_loaded() {
+    launchctl list "$LABEL" >/dev/null 2>&1
+}
+
+wait_state() {
+    local want="$1" i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        if is_loaded && [[ "$want" == loaded ]]; then return 0; fi
+        if ! is_loaded && [[ "$want" == unloaded ]]; then return 0; fi
+        sleep 0.3
+    done
+    return 1
+}
+
+cmd_start() {
+    if is_loaded; then
+        echo "已在运行。"
+        return 0
+    fi
+    local plist="$SRC_PLIST"
+    [[ -s "$DEST_PLIST" ]] && plist="$DEST_PLIST"
+    if launchctl load "$plist" && wait_state loaded; then
+        echo "已启动。"
+        [[ "$plist" == "$SRC_PLIST" ]] && echo "提示：尚未安装登录自启，可运行一次: $(basename "$0") install"
+    else
+        echo "启动失败，请运行 status 或手动检查 launchctl。"
+        exit 1
+    fi
+}
+
+cmd_stop() {
+    if ! is_loaded; then
+        echo "未在运行。"
+        return 0
+    fi
+    if [[ -s "$DEST_PLIST" ]]; then
+        launchctl unload "$DEST_PLIST" 2>/dev/null
+    else
+        launchctl unload "$SRC_PLIST" 2>/dev/null
+    fi
+    if wait_state unloaded; then
+        echo "已停止（下次登录时若已 install 仍会自动启动）。"
+    else
+        echo "停止可能未生效，请运行 status 确认。"
+        exit 1
+    fi
+}
+
+cmd_status() {
+    if is_loaded; then
+        echo "服务状态: 运行中"
+    else
+        echo "服务状态: 已停止"
+    fi
+    local list num cur name entry
+    list=$("$M1DDC" display list 2>/dev/null)
+    for entry in $DISPLAYS; do
+        name="${entry%%:*}"
+        num=$(echo "$list" | awk -v n="$name" '$3 == n {print $1}')
+        if [[ -n "${num:-}" ]]; then
+            cur=$("$M1DDC" display "$num" get luminance 2>/dev/null)
+            [[ "$cur" =~ ^[0-9]+$ ]] || cur=$("$M1DDC" display "$num" get luminance 2>/dev/null)
+            echo "$name 当前亮度: ${cur:-未知}"
+        else
+            echo "$name: 未连接"
+        fi
+    done
+    if [[ -f "$LOG" ]]; then
+        echo "最近记录:"
+        tail -3 "$LOG" | sed 's/^/  /'
+    fi
+}
+
+cmd_install() {
+    mkdir -p "$HOME/Library/LaunchAgents"
+    cp "$SRC_PLIST" "$DEST_PLIST" || { echo "复制 plist 失败。"; exit 1; }
+    launchctl unload "$SRC_PLIST" 2>/dev/null
+    if launchctl load -w "$DEST_PLIST"; then
+        echo "已安装并启动，登录系统时将自动运行。"
+    else
+        echo "加载失败，请手动运行: launchctl load -w $DEST_PLIST"
+        exit 1
+    fi
+}
+
+cmd_uninstall() {
+    launchctl unload "$DEST_PLIST" 2>/dev/null
+    rm -f "$DEST_PLIST"
+    echo "已卸载开机自启（项目文件与日志保留）。"
+}
+
+case "${1:-}" in
+    start) cmd_start ;;
+    stop) cmd_stop ;;
+    restart) cmd_stop >/dev/null; cmd_start ;;
+    status) cmd_status ;;
+    install) cmd_install ;;
+    uninstall) cmd_uninstall ;;
+    *)
+        echo "用法: $(basename "$0") {start|stop|restart|status|install|uninstall}"
+        echo "  start      启动自动调光"
+        echo "  stop       停止自动调光（本会话）"
+        echo "  restart    重启"
+        echo "  status     查看状态、当前亮度与最近记录"
+        echo "  install    安装为登录自启（一次性）"
+        echo "  uninstall  移除登录自启"
+        exit 1
+        ;;
+esac
