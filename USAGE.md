@@ -63,7 +63,8 @@ cd /Users/boyce/Misc/code/dev/mateview-auto-brightness
 
 注意 `stop` 与 `uninstall` 的区别：
 
-- `stop`：**仅当前会话停止**。由于已安装登录自启，下次登录系统会自动恢复运行。适合临时暂停（如想用显示器摇杆手动定亮度，不希望 60 秒内被纠正回来），用完 `start` 恢复即可。
+- `stop`：**仅当前会话停止**。由于已安装登录自启，下次登录系统会自动恢复运行。适合临时暂停，用完 `start` 恢复即可。
+- `restart`：**重启并清除手动调节暂停**。如果你手动调过亮度导致某台显示器被暂停，`restart` 会立即恢复自动调光。
 - `uninstall`：**彻底停用**。停止服务并移除开机自启，重启后也不会再运行；想恢复时执行一次 `install` 即可。
 
 ### 配置短命令（可选，实现真正的"一键"）
@@ -74,15 +75,14 @@ cd /Users/boyce/Misc/code/dev/mateview-auto-brightness
 echo "alias mvb='/Users/boyce/Misc/code/dev/mateview-auto-brightness/mateview-brightness-ctl'" >> ~/.zshrc && source ~/.zshrc
 ```
 
-### 临时手动控制亮度
+### 手动调节亮度
 
-自动调光每 60 秒校准一次，用摇杆手动改的亮度最多 60 秒后会被纠正回来。想手动定亮度时先停掉：
+直接用显示器摇杆调节亮度即可，无需先停止服务。脚本会在下一次校准（最多 60 秒）时检测到手动调节，并**自动暂停该显示器的自动调光**，直到次日或手动 `restart`。
 
-```bash
-mvb stop          # 停止
-# （用摇杆或 ./m1ddc display 1 set luminance 60 随意调）
-mvb start         # 恢复自动调光
-```
+- 暂停是**逐屏独立**的：只暂停被手动调节的那台，另一台不受影响继续自动调光。
+- 次日首次运行时自动恢复。
+- 想立即恢复：`mvb restart`。
+- 查看暂停状态：`mvb status` 会标注"已暂停-手动调节"。
 
 ## 自定义亮度曲线
 

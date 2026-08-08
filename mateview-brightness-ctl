@@ -7,6 +7,7 @@ SRC_PLIST="$DIR/$LABEL.plist"
 DEST_PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 M1DDC="$DIR/m1ddc"
 LOG="$DIR/mateview-brightness.log"
+STATE="$DIR/mateview-brightness.state"
 DISPLAYS="MateView:45:20 U27U2D:25:0"
 
 is_loaded() {
@@ -63,17 +64,20 @@ cmd_status() {
     else
         echo "服务状态: 已停止"
     fi
-    local list num cur name entry
+    local list num cur name entry sp suffix
     list=$("$M1DDC" display list 2>/dev/null)
     for entry in $DISPLAYS; do
         name="${entry%%:*}"
+        suffix=""
+        sp=$(grep "^$name|" "$STATE" 2>/dev/null | cut -d'|' -f4)
+        [[ "$sp" == "1" ]] && suffix="（已暂停-手动调节）"
         num=$(echo "$list" | awk -v n="$name" '$3 == n {print $1}')
         if [[ -n "${num:-}" ]]; then
             cur=$("$M1DDC" display "$num" get luminance 2>/dev/null)
             [[ "$cur" =~ ^[0-9]+$ ]] || cur=$("$M1DDC" display "$num" get luminance 2>/dev/null)
-            echo "$name 当前亮度: ${cur:-未知}"
+            echo "$name 当前亮度: ${cur:-未知}${suffix}"
         else
-            echo "$name: 未连接"
+            echo "$name: 未连接${suffix}"
         fi
     done
     if [[ -f "$LOG" ]]; then
@@ -103,7 +107,7 @@ cmd_uninstall() {
 case "${1:-}" in
     start) cmd_start ;;
     stop) cmd_stop ;;
-    restart) cmd_stop >/dev/null; cmd_start ;;
+    restart) cmd_stop >/dev/null; rm -f "$STATE" 2>/dev/null; cmd_start ;;
     status) cmd_status ;;
     install) cmd_install ;;
     uninstall) cmd_uninstall ;;
@@ -111,7 +115,7 @@ case "${1:-}" in
         echo "用法: $(basename "$0") {start|stop|restart|status|install|uninstall}"
         echo "  start      启动自动调光"
         echo "  stop       停止自动调光（本会话）"
-        echo "  restart    重启"
+        echo "  restart    重启（同时清除手动调节暂停）"
         echo "  status     查看状态、当前亮度与最近记录"
         echo "  install    安装为登录自启（一次性）"
         echo "  uninstall  移除登录自启"
