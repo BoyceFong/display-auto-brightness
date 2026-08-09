@@ -23,6 +23,7 @@ extern IOReturn IOAVServiceWriteI2C(IOAVServiceRef service, uint32_t chipAddress
 
 #define DDC_WAIT 10000 // depending on display this must be set to as high as 50000
 #define DDC_ITERATIONS 2 // depending on display this must be set higher
+#define DDC_READ_ATTEMPTS 3 // retry whole read transaction on invalid/corrupted replies
 
 int main(int argc, char** argv) {
 
@@ -230,29 +231,57 @@ int main(int argc, char** argv) {
             data[1] = 0x01;
             data[3] = 0x6e ^ data[0] ^ data[1] ^ data[2] ^ data[3];
 
-            for (int i = 0; i < DDC_ITERATIONS; ++i) {
+            char i2cBytes[12];
+            bool readOk = false;
+            IOReturn lastErr = kIOReturnSuccess;
+
+            for (int attempt = 0; attempt < DDC_READ_ATTEMPTS && !readOk; ++attempt) {
+
+                if (attempt > 0) usleep(DDC_WAIT * 5);
+
+                bool writeOk = true;
+                for (int i = 0; i < DDC_ITERATIONS; ++i) {
+
+                    usleep(DDC_WAIT);
+                    err = IOAVServiceWriteI2C(avService, 0x37, 0x51, data, 4);
+
+                    if (err) { lastErr = err; writeOk = false; break; }
+
+                }
+                if (!writeOk) continue;
+
+                memset(i2cBytes, 0, sizeof(i2cBytes));
 
                 usleep(DDC_WAIT);
-                err = IOAVServiceWriteI2C(avService, 0x37, 0x51, data, 4);
+                err = IOAVServiceReadI2C(avService, 0x37, 0x51, i2cBytes, 12);
 
-                if (err) {
+                if (err) { lastErr = err; continue; }
 
-                    returnText = [NSString stringWithFormat:@"I2C communication failure: %s\n", mach_error_string(err)];
-                    goto cya;
-
+                // Validate the Get VCP Feature Reply before trusting it,
+                // otherwise an unanswered request yields a zeroed buffer
+                // that silently parses as value 0:
+                // [0]=0x6E display address, [2]=0x02 reply type,
+                // [3]=0x00 result code, [4]=requested VCP opcode echo,
+                // XOR(bytes 0..10)==0x50 checksum (reply destined to host 0x28<<1)
+                unsigned char cs = 0;
+                for (int b = 0; b <= 10; ++b) cs ^= (unsigned char)i2cBytes[b];
+                if ((unsigned char)i2cBytes[0] == 0x6e &&
+                    (unsigned char)i2cBytes[2] == 0x02 &&
+                    (unsigned char)i2cBytes[3] == 0x00 &&
+                    (unsigned char)i2cBytes[4] == data[2] &&
+                    cs == 0x50) {
+                    readOk = true;
                 }
 
             }
 
-            char i2cBytes[12];
-            memset(i2cBytes, 0, sizeof(i2cBytes));
+            if (!readOk) {
 
-            usleep(DDC_WAIT);
-            err = IOAVServiceReadI2C(avService, 0x37, 0x51, i2cBytes, 12);
-
-            if (err) {
-
-                returnText = [NSString stringWithFormat:@"I2C communication failure: %s\n", mach_error_string(err)];
+                if (lastErr) {
+                    returnText = [NSString stringWithFormat:@"I2C communication failure: %s\n", mach_error_string(lastErr)];
+                } else {
+                    returnText = @"Invalid DDC reply from display (validation failed after retries)\n";
+                }
                 goto cya;
 
             }
