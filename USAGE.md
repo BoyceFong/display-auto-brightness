@@ -78,7 +78,7 @@ echo "alias mvb='/Users/boyce/Misc/code/dev/mateview-auto-brightness/mateview-br
 
 ### 手动调节亮度
 
-直接用显示器摇杆调节亮度即可，无需先停止服务。脚本会在下一次校准（最多 60 秒）时检测到手动调节，并**自动暂停该显示器的自动调光**，直到次日或手动 `restart`。
+直接用显示器摇杆调节亮度即可，无需先停止服务。脚本检测到手动调节后会**自动暂停该显示器的自动调光**，直到次日或手动 `restart`。为避免 DDC 偶发读数毛刺造成误判，异常值需**连续 3 次校准（约 3 分钟）保持稳定**才会判定为手动调节并暂停；确认期间不会覆盖你手动设置的值。
 
 - 暂停是**逐屏独立**的：只暂停被手动调节的那台，另一台不受影响继续自动调光。
 - 次日首次运行时自动恢复。
@@ -116,7 +116,7 @@ DISPLAYS="MateView:45:20 U27U2D:25:0"
 确认执行过一次 `install`。运行 `./mateview-brightness-ctl status` 查看状态，未运行时执行 `start`。若 `start` 报 I/O 错误，是 launchd 瞬态问题，等几分钟重试或重启 Mac 即可。
 
 **Q: 手动调了亮度后自动调光不生效了？**
-这是预期行为：脚本检测到手动调节后会暂停该显示器的自动调光，直到次日或 `restart`。运行 `./mateview-brightness-ctl status` 可查看暂停状态。
+这是预期行为：脚本检测到手动调节（连续约 3 分钟确认）后会暂停该显示器的自动调光，直到次日或 `restart`。运行 `./mateview-brightness-ctl status` 可查看暂停状态。注意"次日"以午夜为界：凌晨触发的暂停同样在当天午夜后解除。
 
 **Q: 换了 Mac 或升级了大的 macOS 版本后 m1ddc 报错？**
 重新编译：`cd m1ddc-1.1.0 && make && cp m1ddc ../`（需要 Xcode Command Line Tools）。
